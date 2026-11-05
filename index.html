@@ -8,14 +8,17 @@
     content="width=device-width, initial-scale=1, viewport-fit=cover"
   >
 
-  <title>Black Box</title>
+  <title>Black Box Experience</title>
 
   <style>
     * {
       box-sizing: border-box;
     }
 
+    html,
     body {
+      width: 100%;
+      height: 100%;
       margin: 0;
       overflow: hidden;
       background: #111;
@@ -23,20 +26,23 @@
       font-family: Arial, sans-serif;
     }
 
-    video,
-    canvas {
+    #camera {
       position: fixed;
       inset: 0;
       width: 100%;
       height: 100%;
-    }
-
-    video {
       object-fit: cover;
+      z-index: 0;
     }
 
-    canvas {
+    #ar-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent;
       pointer-events: none;
+      z-index: 2;
     }
 
     #welcome {
@@ -52,7 +58,8 @@
 
     h1 {
       font-size: 38px;
-      margin-bottom: 12px;
+      line-height: 1.1;
+      margin-bottom: 16px;
     }
 
     p {
@@ -97,7 +104,13 @@
       right: 20px;
       text-align: center;
       font-size: 15px;
-      text-shadow: 0 2px 8px black;
+    }
+
+    #hint span {
+      display: inline-block;
+      padding: 10px 16px;
+      border-radius: 20px;
+      background: rgba(0, 0, 0, 0.65);
     }
 
     #drop {
@@ -108,6 +121,12 @@
       pointer-events: auto;
     }
 
+    #error {
+      max-width: 340px;
+      color: #ffca9d;
+      font-size: 14px;
+    }
+
     [hidden] {
       display: none !important;
     }
@@ -116,7 +135,13 @@
 
 <body>
 
-  <video id="camera" autoplay muted playsinline></video>
+  <video
+    id="camera"
+    autoplay
+    muted
+    playsinline
+    webkit-playsinline
+  ></video>
 
   <div id="welcome">
     <div>
@@ -124,7 +149,9 @@
 
       <p>Point your camera at the black box.</p>
 
-      <button id="start" disabled>Loading…</button>
+      <button id="start" disabled>
+        Loading…
+      </button>
 
       <p id="error" role="alert"></p>
     </div>
@@ -134,27 +161,42 @@
 
   <div id="hud" hidden>
     <div id="hint" role="status">
-      Fit the box inside the guide. Hold still.
+      <span id="hint-text">
+        Fit the real box inside the guide. Hold still.
+      </span>
     </div>
 
     <button id="drop">Drop</button>
   </div>
 
   <script type="module">
-    // Physical installation: 9 feet.
-    // Virtual cube: 3 feet.
-    //
-    // Scale is estimated from the on-screen guide.
-    // This is a camera overlay, not world-tracked AR.
+    /*
+      Actual box: 9 feet.
+      Virtual falling cube: approximately 3 feet
+      when the actual box fits the guide.
 
-    const REAL_BOX_FEET = 9;
-    const VIRTUAL_BOX_FEET = 3;
+      This uses a camera overlay.
+      It does not automatically detect or track the box.
+      Keep the phone still during playback.
+    */
 
-    const CUBE_SIZE = VIRTUAL_BOX_FEET * 0.3048;
-    const FALL_TIME = 1.4;
-    const EFFECT_TIME = 4.2;
+    const CONFIG = {
+      actualBoxFeet: 9,
+      virtualBoxFeet: 3,
+      dropHeight: 2.5,
+      fallSeconds: 1.6,
+      totalSeconds: 4.5
+    };
 
     const $ = id => document.getElementById(id);
+
+    const setHint = text => {
+      $("hint-text").textContent = text;
+    };
+
+    const clamp = value => {
+      return Math.max(0, Math.min(1, value));
+    };
 
     let THREE;
     let renderer;
@@ -170,28 +212,33 @@
       });
     } catch (error) {
       $("start").textContent = "Unable to load";
-      $("error").textContent =
-        "Check your connection and reload the page.";
 
+      $("error").textContent =
+        "Check your internet connection and reload the page.";
+
+      console.error(error);
       throw error;
     }
 
+    renderer.domElement.id = "ar-canvas";
+
     renderer.setClearColor(0x000000, 0);
+
     renderer.setPixelRatio(
       Math.min(window.devicePixelRatio || 1, 2)
     );
 
-    document.body.prepend(renderer.domElement);
+    document.body.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
 
-    const view = new THREE.OrthographicCamera(
+    const camera = new THREE.OrthographicCamera(
       -2, 2, 2, -2, 0.01, 100
     );
 
-    view.position.set(0, 3, 7);
-    view.lookAt(0, 0, 0);
-    view.updateMatrixWorld();
+    camera.position.set(0, 3, 7);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld(true);
 
     scene.add(
       new THREE.HemisphereLight(
@@ -212,21 +259,25 @@
     const effect = new THREE.Group();
     scene.add(effect);
 
+    const cubeSize = CONFIG.virtualBoxFeet * 0.3048;
+
     const cube = new THREE.Mesh(
       new THREE.BoxGeometry(
-        CUBE_SIZE,
-        CUBE_SIZE,
-        CUBE_SIZE
+        cubeSize,
+        cubeSize,
+        cubeSize
       ),
 
       new THREE.MeshStandardMaterial({
-        color: 0x08090b,
-        roughness: 0.85,
-        metalness: 0.1
+        color: 0x090a0c,
+        roughness: 0.82,
+        metalness: 0.12
       })
     );
 
     effect.add(cube);
+
+    // Rubble around the landed cube.
 
     const rubble = new THREE.Group();
     effect.add(rubble);
@@ -247,17 +298,20 @@
 
     const rocks = [];
 
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 32; i++) {
       const angle = i * 2.39996;
       const dx = Math.cos(angle);
       const dz = Math.sin(angle);
 
       const edge =
-        CUBE_SIZE / 2 /
+        cubeSize / 2 /
         Math.max(Math.abs(dx), Math.abs(dz));
 
-      const radius = edge + 0.08 + (i % 4) * 0.06;
-      const size = 0.035 + (i % 4) * 0.018;
+      const radius =
+        edge + 0.08 + (i % 4) * 0.06;
+
+      const size =
+        0.035 + (i % 4) * 0.018;
 
       const rock = new THREE.Mesh(
         rockGeometry,
@@ -270,7 +324,11 @@
         size * 1.2
       );
 
-      rock.rotation.set(i, i * 0.7, i * 0.4);
+      rock.rotation.set(
+        i,
+        i * 0.7,
+        i * 0.4
+      );
 
       rubble.add(rock);
 
@@ -282,12 +340,14 @@
       });
     }
 
+    // Dust particles.
+
     const dust = [];
 
     const dustGeometry =
       new THREE.SphereGeometry(1, 8, 6);
 
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 14; i++) {
       const puff = new THREE.Mesh(
         dustGeometry,
 
@@ -304,15 +364,17 @@
       dust.push(puff);
     }
 
+    effect.visible = false;
+
     let stream = null;
     let audio = null;
+
+    let ready = false;
     let running = false;
     let impacted = false;
+
     let elapsed = 0;
     let previousTime = null;
-    let ready = false;
-
-    effect.visible = false;
 
     function layout() {
       const width = window.innerWidth;
@@ -327,65 +389,100 @@
 
       const baseline = height * 0.66;
 
-      $("guide").style.width = guideSize + "px";
-      $("guide").style.height = guideSize + "px";
-      $("guide").style.left =
-        (width - guideSize) / 2 + "px";
+      Object.assign($("guide").style, {
+        width: guideSize + "px",
+        height: guideSize + "px",
+        left: (width - guideSize) / 2 + "px",
+        top: baseline - guideSize + "px"
+      });
 
-      $("guide").style.top =
-        baseline - guideSize + "px";
-
-      // The virtual cube is one third of the
-      // guide width: 3 ft compared with 9 ft.
+      // Virtual cube width = one third of the
+      // actual 9-foot box's on-screen guide.
 
       const virtualPixelWidth =
         guideSize *
-        (VIRTUAL_BOX_FEET / REAL_BOX_FEET);
+        CONFIG.virtualBoxFeet /
+        CONFIG.actualBoxFeet;
 
       const unitsPerPixel =
-        CUBE_SIZE / virtualPixelWidth;
+        cubeSize / virtualPixelWidth;
 
-      const halfWidth = width * unitsPerPixel / 2;
-      const halfHeight = height * unitsPerPixel / 2;
+      const halfWidth =
+        width * unitsPerPixel / 2;
 
-      // Align the virtual cube's front bottom edge
-      // with the bottom of the real-box guide.
+      const halfHeight =
+        height * unitsPerPixel / 2;
 
       const frontBase = new THREE.Vector3(
         0,
         0,
-        CUBE_SIZE / 2
-      ).applyMatrix4(view.matrixWorldInverse);
+        cubeSize / 2
+      );
 
-      const targetY = 1 - 2 * baseline / height;
+      frontBase.applyMatrix4(
+        camera.matrixWorldInverse
+      );
+
+      const targetY =
+        1 - 2 * baseline / height;
+
       const centreY =
         frontBase.y - targetY * halfHeight;
 
-      view.left = -halfWidth;
-      view.right = halfWidth;
-      view.top = centreY + halfHeight;
-      view.bottom = centreY - halfHeight;
+      camera.left = -halfWidth;
+      camera.right = halfWidth;
+      camera.top = centreY + halfHeight;
+      camera.bottom = centreY - halfHeight;
 
-      view.updateProjectionMatrix();
+      camera.updateProjectionMatrix();
     }
 
-    function impactSound() {
+    function prepare() {
+      running = false;
+      effect.visible = false;
+      rubble.visible = false;
+
+      dust.forEach(puff => {
+        puff.visible = false;
+        puff.material.opacity = 0;
+      });
+
+      $("guide").hidden = false;
+      $("drop").disabled = false;
+      $("drop").textContent = "Drop";
+
+      setHint(
+        "Fit the real box inside the guide. Hold still."
+      );
+    }
+
+    function playImpactSound() {
       if (!audio || audio.state !== "running") {
         return;
       }
 
       const now = audio.currentTime;
-      const oscillator = audio.createOscillator();
-      const gain = audio.createGain();
 
-      oscillator.frequency.setValueAtTime(110, now);
+      const oscillator =
+        audio.createOscillator();
+
+      const gain =
+        audio.createGain();
+
+      oscillator.frequency.setValueAtTime(
+        110,
+        now
+      );
 
       oscillator.frequency.exponentialRampToValueAtTime(
         28,
         now + 0.6
       );
 
-      gain.gain.setValueAtTime(0.35, now);
+      gain.gain.setValueAtTime(
+        0.35,
+        now
+      );
 
       gain.gain.exponentialRampToValueAtTime(
         0.001,
@@ -404,38 +501,33 @@
       };
     }
 
-    function prepare() {
-      running = false;
-      effect.visible = false;
-      rubble.visible = false;
-
-      dust.forEach(puff => {
-        puff.visible = false;
-      });
-
-      $("guide").hidden = false;
-      $("drop").disabled = false;
-      $("drop").textContent = "Drop";
-
-      $("hint").textContent =
-        "Fit the box inside the guide. Hold still.";
-    }
+    // Start the rear camera.
 
     $("start").onclick = async () => {
       $("start").disabled = true;
       $("error").textContent = "";
 
       try {
-        // If playback needs a second user tap on iOS,
-        // reuse the existing camera stream.
-        if (!stream) {
+        const hasLiveTrack = stream
+          ?.getVideoTracks()
+          .some(track => track.readyState === "live");
+
+        if (!hasLiveTrack) {
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
 
             video: {
-              facingMode: { ideal: "environment" },
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
+              facingMode: {
+                ideal: "environment"
+              },
+
+              width: {
+                ideal: 1280
+              },
+
+              height: {
+                ideal: 720
+              }
             }
           });
 
@@ -461,8 +553,12 @@
           error.name === "NotAllowedError"
             ? "Allow camera access, then tap Try again."
             : "Camera unavailable. Open this page in Safari or Chrome and try again.";
+
+        console.error(error);
       }
     };
+
+    // Drop or replay.
 
     $("drop").onclick = () => {
       if (!ready || running) {
@@ -476,9 +572,12 @@
 
         if (Audio) {
           audio ??= new Audio();
+
           audio.resume().catch(() => {});
         }
-      } catch {}
+      } catch (error) {
+        console.warn("Sound unavailable:", error);
+      }
 
       elapsed = 0;
       previousTime = null;
@@ -490,20 +589,122 @@
 
       dust.forEach(puff => {
         puff.visible = false;
+        puff.material.opacity = 0;
       });
 
       cube.position.set(
         0,
-        CUBE_SIZE / 2 + 2.5,
+        cubeSize / 2 + CONFIG.dropHeight,
         0
       );
 
-      cube.rotation.set(0, 0, 0);
+      cube.rotation.set(
+        0.1,
+        0.2,
+        -0.08
+      );
 
       $("guide").hidden = true;
       $("drop").disabled = true;
-      $("hint").textContent = "Hold still…";
+
+      setHint("Incoming… Hold still.");
     };
+
+    function updateLanding(dt) {
+      elapsed += dt;
+
+      const progress = clamp(
+        elapsed / CONFIG.fallSeconds
+      );
+
+      cube.position.y =
+        cubeSize / 2 +
+        CONFIG.dropHeight *
+        (1 - progress * progress);
+
+      cube.rotation.set(
+        (1 - progress) * 0.1,
+        (1 - progress) * 0.2,
+        (1 - progress) * -0.08
+      );
+
+      if (progress < 1) {
+        return;
+      }
+
+      if (!impacted) {
+        impacted = true;
+        rubble.visible = true;
+
+        playImpactSound();
+
+        setHint("It has landed.");
+      }
+
+      const age =
+        elapsed - CONFIG.fallSeconds;
+
+      const spread =
+        clamp(age / 0.65);
+
+      cube.position.y =
+        cubeSize / 2 +
+        Math.abs(Math.sin(age * 15)) *
+        0.025 *
+        Math.exp(-age * 5);
+
+      rocks.forEach(rock => {
+        rock.mesh.position.set(
+          rock.x * (0.8 + spread * 0.2),
+
+          rock.y +
+          Math.sin(spread * Math.PI) * 0.16,
+
+          rock.z * (0.8 + spread * 0.2)
+        );
+      });
+
+      dust.forEach((puff, i) => {
+        const delay = i * 0.02;
+
+        const life = clamp(
+          (age - delay) / 1.8
+        );
+
+        const angle =
+          i * Math.PI * 2 / dust.length;
+
+        puff.visible =
+          age >= delay && life < 1;
+
+        puff.material.opacity =
+          0.3 * (1 - life);
+
+        puff.position.set(
+          Math.cos(angle) * (0.5 + life * 0.65),
+          0.05 + life * 0.25,
+          Math.sin(angle) * (0.5 + life * 0.65)
+        );
+
+        puff.scale.set(
+          0.08 + life * 0.3,
+          0.05 + life * 0.2,
+          0.08 + life * 0.3
+        );
+      });
+
+      if (elapsed >= CONFIG.totalSeconds) {
+        running = false;
+
+        cube.position.y = cubeSize / 2;
+        cube.rotation.set(0, 0, 0);
+
+        $("drop").disabled = false;
+        $("drop").textContent = "Replay";
+
+        setHint("Choose what’s next.");
+      }
+    }
 
     function animate(time) {
       requestAnimationFrame(animate);
@@ -519,114 +720,44 @@
       previousTime = time;
 
       if (running && !document.hidden) {
-        elapsed += dt;
-
-        const progress = Math.min(
-          elapsed / FALL_TIME,
-          1
-        );
-
-        cube.position.y =
-          CUBE_SIZE / 2 +
-          2.5 * (1 - progress * progress);
-
-        cube.rotation.set(
-          (1 - progress) * 0.1,
-          (1 - progress) * 0.2,
-          (1 - progress) * -0.08
-        );
-
-        if (progress === 1) {
-          if (!impacted) {
-            impacted = true;
-            rubble.visible = true;
-            impactSound();
-          }
-
-          const age = elapsed - FALL_TIME;
-
-          const spread = Math.min(age / 0.65, 1);
-
-          cube.position.y =
-            CUBE_SIZE / 2 +
-            Math.abs(Math.sin(age * 15)) *
-            0.025 *
-            Math.exp(-age * 5);
-
-          rocks.forEach(rock => {
-            rock.mesh.position.set(
-              rock.x * (0.8 + spread * 0.2),
-
-              rock.y +
-              Math.sin(spread * Math.PI) * 0.16,
-
-              rock.z * (0.8 + spread * 0.2)
-            );
-          });
-
-          dust.forEach((puff, i) => {
-            const life = Math.max(
-              0,
-              Math.min(
-                (age - i * 0.02) / 1.8,
-                1
-              )
-            );
-
-            const angle =
-              i * Math.PI * 2 / dust.length;
-
-            puff.visible =
-              age >= i * 0.02 && life < 1;
-
-            puff.material.opacity =
-              0.3 * (1 - life);
-
-            puff.position.set(
-              Math.cos(angle) * (0.5 + life * 0.65),
-              0.05 + life * 0.25,
-              Math.sin(angle) * (0.5 + life * 0.65)
-            );
-
-            puff.scale.set(
-              0.08 + life * 0.3,
-              0.05 + life * 0.2,
-              0.08 + life * 0.3
-            );
-          });
-
-          if (elapsed >= EFFECT_TIME) {
-            running = false;
-            cube.position.y = CUBE_SIZE / 2;
-
-            $("hint").textContent =
-              "Choose what’s next.";
-
-            $("drop").disabled = false;
-            $("drop").textContent = "Replay";
-          }
-        }
+        updateLanding(dt);
       }
 
-      renderer.render(scene, view);
+      renderer.render(scene, camera);
     }
 
     window.addEventListener("resize", () => {
       layout();
 
-      // Screen rotation changes alignment.
-      // Return to the guide so users can line up again.
       if (ready) {
         prepare();
       }
     });
 
-    document.addEventListener("visibilitychange", () => {
-      previousTime = null;
-    });
+    document.addEventListener(
+      "visibilitychange",
+      () => {
+        previousTime = null;
+      }
+    );
 
     window.addEventListener("pagehide", () => {
-      stream?.getTracks().forEach(track => track.stop());
+      stream?.getTracks().forEach(track => {
+        track.stop();
+      });
+
+      stream = null;
+      ready = false;
+      running = false;
+
+      effect.visible = false;
+
+      $("hud").hidden = true;
+      $("guide").hidden = true;
+      $("welcome").hidden = false;
+
+      $("start").disabled = false;
+      $("start").textContent = "Start camera";
     });
 
     layout();
@@ -642,7 +773,7 @@
       $("start").textContent = "Camera unavailable";
 
       $("error").textContent =
-        "Open the HTTPS GitHub Pages link in Safari or Chrome.";
+        "Open your HTTPS GitHub Pages link in Safari or Chrome.";
     }
   </script>
 
