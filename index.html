@@ -1,31 +1,1061 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-  <title>My First AR Project!</title>
+<meta charset="utf-8">
+<meta name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover">
 
-  <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+<title>Mystery Box</title>
 
-  <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.4.7/aframe/build/aframe-ar.js"></script>
+<style>
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    background: #101114;
+    color: #fff;
+    font-family: system-ui, sans-serif;
+  }
+
+  canvas {
+    position: fixed;
+    inset: 0;
+  }
+
+  button {
+    font: 700 14px system-ui;
+    padding: 13px 17px;
+    border: 0;
+    border-radius: 24px;
+    background: #f9d94d;
+    color: #111;
+    cursor: pointer;
+  }
+
+  button:disabled {
+    opacity: .4;
+    cursor: default;
+  }
+
+  [hidden] {
+    display: none !important;
+  }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+  }
+
+  #intro {
+    position: absolute;
+    inset: 0;
+    background: #101114;
+    display: grid;
+    place-items: center;
+    padding: 26px;
+    pointer-events: auto;
+  }
+
+  .card {
+    max-width: 440px;
+  }
+
+  h1 {
+    font-size: 38px;
+    line-height: 1.05;
+  }
+
+  p {
+    line-height: 1.55;
+    color: #ccc;
+  }
+
+  small {
+    color: #f9d94d;
+  }
+
+  #message {
+    color: #f9d94d;
+    font-size: 14px;
+  }
+
+  #hud {
+    padding: max(18px, env(safe-area-inset-top)) 18px;
+  }
+
+  .pill {
+    display: inline-block;
+    background: #111d;
+    padding: 12px 16px;
+    border-radius: 16px;
+    font-size: 14px;
+    max-width: 440px;
+  }
+
+  #controls {
+    position: absolute;
+    bottom: max(24px, env(safe-area-inset-bottom));
+    left: 12px;
+    right: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+
+  #controls button {
+    pointer-events: auto;
+  }
+
+  .secondary {
+    background: #fff;
+  }
+
+  #exit {
+    position: absolute;
+    top: max(18px, env(safe-area-inset-top));
+    right: 18px;
+    pointer-events: auto;
+  }
+
+  #hud .pill {
+    max-width: calc(100% - 76px);
+  }
+</style>
 </head>
 
-<body style="margin: 0; overflow: hidden;">
+<body>
 
-  <a-scene embedded arjs>
+<div id="overlay">
 
-    <a-marker preset="hiro">
+  <div id="intro">
+    <div class="card">
+      <small>CHOOSE WHAT'S NEXT</small>
 
-      <!-- Your 3D object -->
-      <a-box
-        position="0 0.5 0"
-        color="black"
-        scale="1 1 1">
-      </a-box>
+      <h1>Something big<br>is about to land.</h1>
 
-    </a-marker>
+      <p>
+        Scan the ground near the black box. Aim at the ground
+        directly below the centre of its front face, set the
+        position, then align the yellow outline before starting.
+      </p>
 
-    <a-entity camera></a-entity>
+      <p>
+        No printed marker needed. You position the effect manually.
+      </p>
 
-  </a-scene>
+      <button id="enter" disabled>
+        Checking AR support…
+      </button>
+
+      <p id="message" role="status">
+        Requires a phone and browser with WebXR AR support.
+      </p>
+    </div>
+  </div>
+
+  <div id="hud" hidden>
+    <div id="status"
+         class="pill"
+         role="status"
+         aria-live="polite"></div>
+
+    <button id="exit" class="secondary">
+      Exit
+    </button>
+
+    <div id="controls">
+      <button id="place" disabled>
+        Set position
+      </button>
+
+      <button id="left" class="secondary" hidden>
+        Rotate ↶
+      </button>
+
+      <button id="right" class="secondary" hidden>
+        Rotate ↷
+      </button>
+
+      <button id="land" hidden>
+        Start landing
+      </button>
+
+      <button id="reset" class="secondary" hidden>
+        Reposition
+      </button>
+
+      <button id="sound"
+              class="secondary"
+              aria-pressed="true">
+        Sound: on
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+  // All measurements are in metres.
+  // 9 feet = 2.7432 metres.
+  //
+  // This is full scale, not a tabletop model.
+  // An internet connection is required to load Three.js.
+
+  const CONFIG = {
+    cubeSize: 2.7432,
+    dropHeight: 5,
+    fallSeconds: 1.65,
+    settleSeconds: 3
+  };
+
+  const $ = id => document.getElementById(id);
+
+  const message = text => {
+    $('message').textContent = text;
+  };
+
+  const status = text => {
+    if ($('status').textContent !== text) {
+      $('status').textContent = text;
+    }
+  };
+
+  const clamp = x => Math.max(0, Math.min(1, x));
+
+  // Load Three.js.
+
+  let THREE;
+
+  try {
+    THREE = await import(
+      'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js'
+    );
+  } catch (error) {
+    $('enter').textContent = 'AR could not load';
+
+    message(
+      'Check your internet connection, then reload this page.'
+    );
+
+    throw error;
+  }
+
+  // Create the renderer.
+
+  let renderer;
+
+  try {
+    renderer = new THREE.WebGLRenderer({
+      alpha: true,
+      antialias: true
+    });
+  } catch (error) {
+    $('enter').textContent = 'Graphics unavailable';
+
+    message(
+      'This browser could not start WebGL. Try another supported phone.'
+    );
+
+    throw error;
+  }
+
+  renderer.setPixelRatio(
+    Math.min(window.devicePixelRatio, 2)
+  );
+
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 0);
+
+  renderer.xr.enabled = true;
+  renderer.xr.setReferenceSpaceType('local');
+
+  document.body.prepend(renderer.domElement);
+
+  // Scene and lighting.
+
+  const scene = new THREE.Scene();
+
+  const camera = new THREE.PerspectiveCamera(
+    60,
+    innerWidth / innerHeight,
+    0.05,
+    100
+  );
+
+  scene.add(
+    new THREE.HemisphereLight(
+      0xffffff,
+      0x66594b,
+      2.4
+    )
+  );
+
+  const light = new THREE.DirectionalLight(
+    0xffffff,
+    2.5
+  );
+
+  light.position.set(-3, 8, 5);
+  scene.add(light);
+
+  // Yellow ground-placement ring.
+
+  const reticle = new THREE.Mesh(
+    new THREE.RingGeometry(
+      0.12,
+      0.15,
+      40
+    ).rotateX(-Math.PI / 2),
+
+    new THREE.MeshBasicMaterial({
+      color: 0xf9d94d,
+      side: THREE.DoubleSide
+    })
+  );
+
+  reticle.matrixAutoUpdate = false;
+  reticle.visible = false;
+
+  scene.add(reticle);
+
+  // The pivot represents the front-centre ground point.
+  // The effect is offset behind it by half the cube's depth.
+
+  const pivot = new THREE.Group();
+  const effect = new THREE.Group();
+
+  scene.add(pivot);
+  pivot.add(effect);
+
+  effect.position.z = -CONFIG.cubeSize / 2;
+  pivot.visible = false;
+
+  const s = CONFIG.cubeSize;
+
+  // Falling black cube.
+
+  const cube = new THREE.Mesh(
+    new THREE.BoxGeometry(s, s, s),
+
+    new THREE.MeshStandardMaterial({
+      color: 0x08090b,
+      roughness: 0.88,
+      metalness: 0.1
+    })
+  );
+
+  effect.add(cube);
+
+  // Full-size alignment outline.
+
+  const outline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(
+      new THREE.BoxGeometry(s, s, s)
+    ),
+
+    new THREE.LineBasicMaterial({
+      color: 0xf9d94d
+    })
+  );
+
+  outline.position.y = s / 2;
+
+  effect.add(outline);
+
+  // Rubble.
+
+  const rubble = new THREE.Group();
+  effect.add(rubble);
+
+  const rockGeometry =
+    new THREE.DodecahedronGeometry(1, 0);
+
+  const rockMaterials = [
+    0x494741,
+    0x746d63,
+    0x343431
+  ].map(color => new THREE.MeshStandardMaterial({
+    color,
+    roughness: 1
+  }));
+
+  const rocks = [];
+
+  for (let i = 0; i < 40; i++) {
+    const a = i * 2.39996;
+    const dx = Math.cos(a);
+    const dz = Math.sin(a);
+
+    // Distribute rubble around the square footprint.
+    const edge = s / 2 / Math.max(
+      Math.abs(dx),
+      Math.abs(dz)
+    );
+
+    const radius =
+      edge + 0.2 + (i % 5) * 0.15;
+
+    const size =
+      0.10 + (i % 4) * 0.065;
+
+    const mesh = new THREE.Mesh(
+      rockGeometry,
+      rockMaterials[i % 3]
+    );
+
+    mesh.scale.set(
+      size * 1.5,
+      size,
+      size * 1.2
+    );
+
+    mesh.rotation.set(
+      i * 0.8,
+      i * 1.3,
+      i * 0.4
+    );
+
+    rubble.add(mesh);
+
+    rocks.push({
+      mesh,
+      x: dx * radius,
+      z: dz * radius,
+      y: size * 0.65
+    });
+  }
+
+  // Dust puffs.
+
+  const dust = [];
+
+  const dustGeometry =
+    new THREE.SphereGeometry(1, 8, 6);
+
+  for (let i = 0; i < 16; i++) {
+    const mesh = new THREE.Mesh(
+      dustGeometry,
+
+      new THREE.MeshStandardMaterial({
+        color: 0xa39885,
+        roughness: 1,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false
+      })
+    );
+
+    effect.add(mesh);
+    dust.push(mesh);
+  }
+
+  // Experience state.
+
+  let session = null;
+  let hitSource = null;
+  let localSpace = null;
+  let viewerSpace = null;
+
+  let state = 'scan';
+  let elapsed = 0;
+  let impacted = false;
+  let lastTime = null;
+  let tracking = false;
+
+  let audio = null;
+  let soundOn = true;
+
+  const tempPosition = new THREE.Vector3();
+  const up = new THREE.Vector3();
+
+  // Synthesized impact sound.
+
+  function sound() {
+    if (
+      !soundOn ||
+      !audio ||
+      audio.state !== 'running'
+    ) {
+      return;
+    }
+
+    const t = audio.currentTime;
+
+    const oscillator = audio.createOscillator();
+    const gain = audio.createGain();
+
+    oscillator.frequency.setValueAtTime(115, t);
+
+    oscillator.frequency.exponentialRampToValueAtTime(
+      28,
+      t + 0.65
+    );
+
+    gain.gain.setValueAtTime(0.4, t);
+
+    gain.gain.exponentialRampToValueAtTime(
+      0.001,
+      t + 0.8
+    );
+
+    oscillator.connect(gain);
+    gain.connect(audio.destination);
+
+    oscillator.start(t);
+    oscillator.stop(t + 0.85);
+
+    oscillator.onended = () => {
+      oscillator.disconnect();
+      gain.disconnect();
+    };
+  }
+
+  function hideEffects() {
+    cube.visible = false;
+    rubble.visible = false;
+
+    dust.forEach(puff => {
+      puff.visible = false;
+    });
+  }
+
+  function controls() {
+    $('place').hidden = state !== 'scan';
+
+    for (const id of ['left', 'right']) {
+      $(id).hidden = state !== 'align';
+    }
+
+    $('land').hidden =
+      state !== 'align' && state !== 'done';
+
+    $('land').textContent =
+      state === 'done'
+        ? 'Replay landing'
+        : 'Start landing';
+
+    $('reset').hidden = state === 'scan';
+  }
+
+  function reset() {
+    state = 'scan';
+    elapsed = 0;
+    impacted = false;
+    lastTime = null;
+
+    pivot.visible = false;
+    outline.visible = false;
+    reticle.visible = false;
+
+    hideEffects();
+    controls();
+
+    $('place').disabled = true;
+
+    status(
+      'Move your phone slowly to scan the ground near the box.'
+    );
+  }
+
+  // Falling cube, impact bounce, rubble and dust animation.
+
+  function animateLanding(dt) {
+    elapsed += dt;
+
+    const f = clamp(
+      elapsed / CONFIG.fallSeconds
+    );
+
+    cube.position.y =
+      s / 2 +
+      CONFIG.dropHeight * (1 - f * f);
+
+    cube.rotation.set(
+      (1 - f) * 0.07,
+      (1 - f) * 0.14,
+      (1 - f) * -0.06
+    );
+
+    if (f < 1) {
+      return;
+    }
+
+    if (!impacted) {
+      impacted = true;
+      rubble.visible = true;
+
+      sound();
+
+      status(
+        'It has landed. Choose what’s next.'
+      );
+    }
+
+    const t = elapsed - CONFIG.fallSeconds;
+    const p = clamp(t / 0.85);
+
+    cube.position.y =
+      s / 2 +
+      Math.abs(Math.sin(t * 13)) *
+      0.055 *
+      Math.exp(-t * 5);
+
+    rocks.forEach(rock => {
+      rock.mesh.position.set(
+        rock.x * (0.8 + 0.2 * p),
+        rock.y + Math.sin(p * Math.PI) * 0.4,
+        rock.z * (0.8 + 0.2 * p)
+      );
+    });
+
+    dust.forEach((puff, i) => {
+      const age = t - i * 0.025;
+      const life = clamp(age / 2.3);
+
+      const a =
+        i * Math.PI * 2 / dust.length;
+
+      const edge = s / 2 / Math.max(
+        Math.abs(Math.cos(a)),
+        Math.abs(Math.sin(a))
+      );
+
+      puff.visible =
+        age >= 0 && life < 1;
+
+      puff.material.opacity =
+        0.27 * (1 - life);
+
+      puff.position.set(
+        Math.cos(a) * (edge + life * 1.5),
+        0.12 + life * 0.7,
+        Math.sin(a) * (edge + life * 1.5)
+      );
+
+      puff.scale.set(
+        0.18 + life * 0.85,
+        0.12 + life * 0.5,
+        0.18 + life * 0.85
+      );
+    });
+
+    if (t >= CONFIG.settleSeconds) {
+      state = 'done';
+      cube.position.y = s / 2;
+
+      controls();
+
+      status(
+        'Landed. Replay or reposition the effect.'
+      );
+    }
+  }
+
+  // Set the front-centre ground position.
+
+  $('place').onclick = () => {
+    if (
+      !session ||
+      state !== 'scan' ||
+      !reticle.visible ||
+      !tracking
+    ) {
+      return;
+    }
+
+    pivot.position.setFromMatrixPosition(
+      reticle.matrix
+    );
+
+    const viewer =
+      renderer.xr.getCamera(camera);
+
+    viewer.getWorldPosition(tempPosition);
+
+    // Face the virtual cube's front toward the user.
+    pivot.rotation.set(
+      0,
+
+      Math.atan2(
+        tempPosition.x - pivot.position.x,
+        tempPosition.z - pivot.position.z
+      ),
+
+      0
+    );
+
+    state = 'align';
+
+    pivot.visible = true;
+    outline.visible = true;
+    reticle.visible = false;
+
+    hideEffects();
+    controls();
+
+    status(
+      'Match the yellow outline to the real box. Rotate if needed, or Reposition.'
+    );
+  };
+
+  // Adjust alignment in five-degree increments.
+
+  $('left').onclick = () => {
+    if (state === 'align') {
+      pivot.rotation.y += Math.PI / 36;
+    }
+  };
+
+  $('right').onclick = () => {
+    if (state === 'align') {
+      pivot.rotation.y -= Math.PI / 36;
+    }
+  };
+
+  $('reset').onclick = reset;
+
+  // Start or replay the landing.
+
+  $('land').onclick = () => {
+    if (
+      !tracking ||
+      !['align', 'done'].includes(state)
+    ) {
+      return;
+    }
+
+    state = 'fall';
+    elapsed = 0;
+    impacted = false;
+
+    outline.visible = false;
+
+    hideEffects();
+
+    cube.visible = true;
+
+    cube.position.set(
+      0,
+      s / 2 + CONFIG.dropHeight,
+      0
+    );
+
+    controls();
+
+    audio?.resume().catch(() => {});
+
+    status(
+      'Incoming… Stand back to see the full landing.'
+    );
+  };
+
+  $('sound').onclick = () => {
+    soundOn = !soundOn;
+
+    $('sound').textContent =
+      'Sound: ' + (soundOn ? 'on' : 'off');
+
+    $('sound').setAttribute(
+      'aria-pressed',
+      String(soundOn)
+    );
+
+    if (soundOn) {
+      audio?.resume().catch(() => {});
+    }
+  };
+
+  $('exit').onclick = () => {
+    session?.end().catch(() => {
+      message(
+        'Could not end AR. Use your browser’s exit control.'
+      );
+    });
+  };
+
+  // Prevent overlay taps from becoming scene selections.
+
+  $('overlay').addEventListener(
+    'beforexrselect',
+    event => event.preventDefault()
+  );
+
+  function cleanup() {
+    hitSource?.cancel();
+
+    hitSource = null;
+    localSpace = null;
+    viewerSpace = null;
+    session = null;
+
+    renderer.setAnimationLoop(null);
+    renderer.clear();
+
+    reset();
+
+    tracking = false;
+
+    $('hud').hidden = true;
+    $('intro').hidden = false;
+    $('enter').disabled = false;
+    $('enter').textContent = 'Start AR';
+
+    message(
+      'AR ended. You can start again.'
+    );
+  }
+
+  // Start the WebXR AR session.
+
+  $('enter').onclick = async () => {
+    $('enter').disabled = true;
+
+    try {
+      // Request immediately inside the tap handler.
+      const request = navigator.xr.requestSession(
+        'immersive-ar',
+
+        {
+          requiredFeatures: [
+            'local',
+            'hit-test',
+            'dom-overlay'
+          ],
+
+          domOverlay: {
+            root: $('overlay')
+          }
+        }
+      );
+
+      try {
+        const Audio =
+          window.AudioContext ||
+          window.webkitAudioContext;
+
+        if (Audio) {
+          audio ??= new Audio();
+          audio.resume().catch(() => {});
+        }
+      } catch {}
+
+      session = await request;
+
+      session.addEventListener(
+        'end',
+        cleanup,
+        { once: true }
+      );
+
+      await renderer.xr.setSession(session);
+
+      localSpace =
+        await session.requestReferenceSpace('local');
+
+      viewerSpace =
+        await session.requestReferenceSpace('viewer');
+
+      hitSource =
+        await session.requestHitTestSource({
+          space: viewerSpace
+        });
+
+      if (!hitSource) {
+        throw new Error(
+          'Surface scanning unavailable.'
+        );
+      }
+
+      $('intro').hidden = true;
+      $('hud').hidden = false;
+
+      reset();
+
+      renderer.setAnimationLoop((time, frame) => {
+        if (!frame || !localSpace) {
+          return;
+        }
+
+        const dt =
+          lastTime === null
+            ? 0
+            : Math.min(
+                (time - lastTime) / 1000,
+                0.05
+              );
+
+        lastTime = time;
+
+        const pose =
+          frame.getViewerPose(localSpace);
+
+        const wasTracking = tracking;
+
+        tracking =
+          !!pose &&
+          session?.visibilityState === 'visible';
+
+        if (!tracking) {
+          reticle.visible = false;
+          pivot.visible = false;
+
+          $('place').disabled = true;
+          $('land').disabled = true;
+
+          status(
+            'Tracking paused. Point toward the ground and move slowly.'
+          );
+        } else {
+          $('land').disabled = false;
+
+          pivot.visible = state !== 'scan';
+
+          if (state === 'scan') {
+            reticle.visible = false;
+
+            const results =
+              frame.getHitTestResults(hitSource);
+
+            for (const result of results) {
+              const hit =
+                result.getPose(localSpace);
+
+              if (!hit) {
+                continue;
+              }
+
+              reticle.matrix.fromArray(
+                hit.transform.matrix
+              );
+
+              up.setFromMatrixColumn(
+                reticle.matrix,
+                1
+              );
+
+              // Reject walls and steep surfaces.
+              // Flat tables can also pass this check,
+              // so deliberately aim at the actual ground.
+              if (up.y > 0.92) {
+                reticle.visible = true;
+                break;
+              }
+            }
+
+            $('place').disabled =
+              !reticle.visible;
+
+            status(
+              reticle.visible
+                ? 'Aim the ring at the front-centre base of the real box, then Set position.'
+                : 'Scan the ground slowly until a yellow ring appears.'
+            );
+          } else if (state === 'fall') {
+            animateLanding(
+              wasTracking ? dt : 0
+            );
+          } else if (!wasTracking) {
+            status(
+              state === 'align'
+                ? 'Align the outline, then Start landing.'
+                : 'Landed. Replay or reposition the effect.'
+            );
+          }
+        }
+
+        renderer.render(scene, camera);
+      });
+    } catch (error) {
+      const active = session;
+
+      if (active) {
+        try {
+          await active.end();
+        } catch {
+          cleanup();
+        }
+      }
+
+      $('enter').disabled = false;
+      $('enter').textContent = 'Try AR again';
+
+      message(
+        error.name === 'NotAllowedError'
+          ? 'AR permission was denied. Allow camera/AR access and try again.'
+          : 'This AR mode could not start. It needs WebXR AR, surface scanning and on-screen controls. Try Chrome on an ARCore-supported Android phone.'
+      );
+
+      console.error(error);
+    }
+  };
+
+  // Handle screen rotation and resizing.
+
+  window.addEventListener('resize', () => {
+    camera.aspect =
+      innerWidth / innerHeight;
+
+    camera.updateProjectionMatrix();
+
+    renderer.setSize(
+      innerWidth,
+      innerHeight
+    );
+  });
+
+  // Check browser support before enabling Start AR.
+
+  async function checkSupport() {
+    if (!window.isSecureContext) {
+      $('enter').textContent = 'HTTPS required';
+
+      message(
+        'Open the HTTPS GitHub Pages URL, not a downloaded file.'
+      );
+
+      return;
+    }
+
+    try {
+      if (
+        !navigator.xr ||
+        !await navigator.xr.isSessionSupported(
+          'immersive-ar'
+        )
+      ) {
+        $('enter').textContent =
+          'AR unavailable on this browser';
+
+        message(
+          'Try Chrome on an ARCore-supported Android phone with Google Play Services for AR. This WebXR version does not run in standard iPhone Safari.'
+        );
+
+        return;
+      }
+
+      $('enter').disabled = false;
+      $('enter').textContent = 'Start AR';
+
+      message(
+        'AR detected. Tap Start AR and allow access.'
+      );
+    } catch (error) {
+      $('enter').textContent =
+        'AR unavailable';
+
+      message(
+        'Could not check AR support. Open this page directly in a supported phone browser.'
+      );
+    }
+  }
+
+  await checkSupport();
+</script>
 
 </body>
 </html>
